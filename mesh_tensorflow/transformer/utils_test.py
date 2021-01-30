@@ -23,7 +23,7 @@ import mesh_tensorflow as mtf
 from mesh_tensorflow.transformer import utils
 import numpy as np
 import tensorflow.compat.v1 as tf
-
+import os
 tf.disable_v2_behavior()
 
 
@@ -37,6 +37,13 @@ def mock_vocabulary(encode_dict, vocab_size=None):
 
 
 class UtilsTest(parameterized.TestCase, tf.test.TestCase):
+
+  def _mock_model_dir(self, checkpoint_steps):
+    """Creates a mock dir with empty checkpoint files with real-looking names."""
+    out_dir = self.create_tempdir()
+    for step in checkpoint_steps:
+      out_dir.create_file("model.ckpt-{}".format(step))
+    return out_dir.full_path
 
   def testDynamicText2self_packed(self):
     batch = 2
@@ -159,6 +166,46 @@ class UtilsTest(parameterized.TestCase, tf.test.TestCase):
     self.assertEqual(result[0]["inputs_pretokenized"], "Hello world!")
     self.assertSameElements(result[0].keys(), ("inputs", "inputs_pretokenized"))
     self.assertLen(result, 1)
+
+  def test_checkpoint_iterator_step_not_exists(self):
+    model_dir = self._mock_model_dir([10, 20])
+
+    ckpt_paths = utils.get_checkpoint_iterator(12, model_dir, find_closest=True)
+    expected = [os.path.join(model_dir, "model.ckpt-10")]
+    self.assertAllEqual(expected, list(ckpt_paths), "closest is below")
+
+    ckpt_paths = utils.get_checkpoint_iterator(18, model_dir, find_closest=True)
+    expected = [os.path.join(model_dir, "model.ckpt-20")]
+    self.assertAllEqual(expected, list(ckpt_paths), "closest is above")
+
+    ckpt_paths = utils.get_checkpoint_iterator(
+        [18, 19], model_dir, find_closest=True)
+    expected = [os.path.join(model_dir, "model.ckpt-20")]
+    self.assertAllEqual(expected, list(ckpt_paths),
+                        "closest for both is step 20")
+
+    ckpt_paths = utils.get_checkpoint_iterator(
+        [12, 19], model_dir, find_closest=True)
+    expected = [os.path.join(model_dir, "model.ckpt-10"),
+                os.path.join(model_dir, "model.ckpt-20")]
+    self.assertAllEqual(expected, list(ckpt_paths),
+                        "closest two are steps 10 and 20")
+
+    with self.assertRaises(ValueError,
+                           msg="find_closest is false and step does not exist"):
+      utils.get_checkpoint_iterator(12, model_dir, find_closest=False)
+
+  def test_checkpoint_iterator_some_steps_exist(self):
+    model_dir = self._mock_model_dir([10, 20])
+
+    ckpt_paths = utils.get_checkpoint_iterator(10, model_dir, find_closest=True)
+    expected = [os.path.join(model_dir, "model.ckpt-10")]
+    self.assertAllEqual(expected, list(ckpt_paths), "checkpoint step exists")
+
+    ckpt_paths = utils.get_checkpoint_iterator(
+        [11, 19, 20], model_dir, find_closest=False)
+    expected = [os.path.join(model_dir, "model.ckpt-20")]
+    self.assertAllEqual(expected, list(ckpt_paths), "only step 20 exists")
 
 
 if __name__ == "__main__":
