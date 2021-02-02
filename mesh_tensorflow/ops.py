@@ -6209,6 +6209,38 @@ class CustomGradientOperation(Operation):
     return list(grads) + [None] * len(self._fn_outputs)
 
 
+@gin.configurable
+def clip_activation_gradient(x, clip_rms_norm=None):
+  """Clip activation gradients by rms-norm."""
+  tf.logging.info("clip_activation_gradient_new.clip_rms_norm: {}".format(
+      clip_rms_norm))
+
+  def _reduce_rms(t):
+    return sqrt(reduce_mean(square(t)))
+
+  def forward_fn(x):
+    """Identity forward pass."""
+    return identity(x)
+
+  def grad_fn(explicit_inputs, all_inputs, forward_operations, outputs,
+              output_grads):
+    del explicit_inputs, all_inputs, outputs, forward_operations
+
+    grad_ys = output_grads
+    if clip_rms_norm:
+      clipped_grad_ys = []
+      for g in grad_ys:
+        rms_norm = _reduce_rms(g)
+        clipping_denom = maximum(1.0, rms_norm / clip_rms_norm)
+        clipped_grad_ys.append(g / clipping_denom)
+      return clipped_grad_ys
+    return grad_ys
+
+  explicit_inputs = [x]
+
+  return custom_gradient(forward_fn, grad_fn, explicit_inputs)
+
+
 def custom_gradient(fn, grad_fn, explicit_inputs):
   """Execute a function and call a custom gradient fn on the backward pass.
 
